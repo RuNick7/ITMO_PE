@@ -233,6 +233,7 @@ def _filter_lessons(
     day_code: str,
     time_code: str,
     query: str | None = None,
+    deduplicate: bool = False,
 ) -> list[dict]:
     # Remove section-based classes from bot flows.
     filtered = []
@@ -255,10 +256,6 @@ def _filter_lessons(
             day_index = int(day_code)
         except ValueError:
             return filtered
-        today = date.today()
-        days_until = (day_index - today.weekday()) % 7
-        target_date = today + timedelta(days=days_until)
-
         day_filtered: list[dict] = []
         for item in filtered:
             raw_date = item.get("date")
@@ -268,17 +265,57 @@ def _filter_lessons(
                 item_date = datetime.fromisoformat(str(raw_date)).date()
             except ValueError:
                 continue
-            if item_date == target_date:
+            if item_date.weekday() == day_index:
                 day_filtered.append(item)
         filtered = day_filtered
 
     if time_code != "any":
-        filtered = [
-            item
-            for item in filtered
-            if str(item.get("time_slot_start") or "") == time_code
-        ]
+        if time_code.startswith("h") and len(time_code) == 3 and time_code[1:].isdigit():
+            target_hour = int(time_code[1:])
+            hour_filtered: list[dict] = []
+            for item in filtered:
+                raw_time = str(item.get("time_slot_start") or "")
+                try:
+                    lesson_hour = int(raw_time.split(":", maxsplit=1)[0])
+                except (ValueError, IndexError):
+                    continue
+                if lesson_hour == target_hour:
+                    hour_filtered.append(item)
+            filtered = hour_filtered
+        else:
+            filtered = [
+                item
+                for item in filtered
+                if str(item.get("time_slot_start") or "") == time_code
+            ]
 
+    if deduplicate:
+        unique: dict[tuple[str, str, int, int], dict] = {}
+        for item in filtered:
+            raw_date = item.get("date")
+            weekday = -1
+            if raw_date:
+                try:
+                    weekday = datetime.fromisoformat(str(raw_date)).date().weekday()
+                except ValueError:
+                    weekday = -1
+            key = (
+                str(item.get("section_name") or ""),
+                str(item.get("time_slot_start") or ""),
+                int(item.get("type_id") or 0),
+                weekday,
+            )
+            current = unique.get(key)
+            if current is None:
+                unique[key] = item
+                continue
+            current_date = str(current.get("date") or "")
+            item_date = str(item.get("date") or "")
+            if item_date and (not current_date or item_date < current_date):
+                unique[key] = item
+        filtered = list(unique.values())
+
+    filtered.sort(key=lambda it: (str(it.get("time_slot_start") or "99:99"), str(it.get("section_name") or "")))
     return filtered
 
 
@@ -512,6 +549,7 @@ async def choose_day_callback(callback: CallbackQuery) -> None:
             day_code=day_code,
             time_code="any",
             query=query,
+            deduplicate=True,
         )
         if not filtered_lessons:
             if callback.message is not None:
@@ -561,6 +599,7 @@ async def choose_time_callback(callback: CallbackQuery) -> None:
         lessons,
         day_code=context.get("day", "any"),
         time_code=context.get("time", "any"),
+        deduplicate=True,
     )
     if not filtered_lessons:
         if callback.message is not None:
@@ -572,7 +611,7 @@ async def choose_time_callback(callback: CallbackQuery) -> None:
     if callback.message is not None:
         await callback.message.answer(
             "Выбери занятие:\n\n" + _legend_text(),
-            reply_markup=sport_lessons_keyboard(filtered_lessons),
+            reply_markup=sport_lessons_keyboard(filtered_lessons, show_time=True),
         )
 
 

@@ -115,30 +115,23 @@ def choose_day_keyboard(available_days: list[int] | None = None) -> InlineKeyboa
 
 
 def choose_time_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+    rows: list[list[InlineKeyboardButton]] = []
+    for hour in range(8, 22):
+        rows.append(
             [
-                InlineKeyboardButton(text="08:10", callback_data="choose_time:08:10"),
-                InlineKeyboardButton(text="09:50", callback_data="choose_time:09:50"),
-            ],
-            [
-                InlineKeyboardButton(text="11:30", callback_data="choose_time:11:30"),
-                InlineKeyboardButton(text="13:30", callback_data="choose_time:13:30"),
-            ],
-            [
-                InlineKeyboardButton(text="15:30", callback_data="choose_time:15:30"),
-                InlineKeyboardButton(text="17:00", callback_data="choose_time:17:00"),
-            ],
-            [
-                InlineKeyboardButton(text="19:00", callback_data="choose_time:19:00"),
-                InlineKeyboardButton(text="21:00", callback_data="choose_time:21:00"),
-            ],
-            [
-                InlineKeyboardButton(text="Любое время", callback_data="choose_time:any"),
-            ],
+                InlineKeyboardButton(
+                    text=f"С {hour:02d}:00 до {hour + 1:02d}:00",
+                    callback_data=f"choose_time:h{hour:02d}",
+                )
+            ]
+        )
+    rows.extend(
+        [
+            [InlineKeyboardButton(text="Любое время", callback_data="choose_time:any")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="choose_sport")],
         ]
     )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def auto_confirm_keyboard() -> InlineKeyboardMarkup:
@@ -255,8 +248,12 @@ def weekly_limit_keyboard() -> InlineKeyboardMarkup:
 
 
 def sport_lessons_keyboard(lessons: list[dict], show_time: bool = False) -> InlineKeyboardMarkup:
+    sorted_lessons = sorted(
+        lessons,
+        key=lambda it: (str(it.get("time_slot_start") or "99:99"), str(it.get("section_name") or "")),
+    )
     buttons: list[InlineKeyboardButton] = []
-    for lesson in lessons[:20]:
+    for lesson in sorted_lessons[:20]:
         section = str(lesson.get("section_name") or "Без названия")
         time_start = str(lesson.get("time_slot_start") or "--:--")
         lesson_id = lesson.get("id")
@@ -268,9 +265,7 @@ def sport_lessons_keyboard(lessons: list[dict], show_time: bool = False) -> Inli
         label = f"{emoji} {section} | {time_start}" if show_time else f"{emoji} {section}"
         buttons.append(InlineKeyboardButton(text=label[:64], callback_data=f"sport_pick:{lesson_id}"))
 
-    rows: list[list[InlineKeyboardButton]] = []
-    for idx in range(0, len(buttons), 2):
-        rows.append(buttons[idx:idx + 2])
+    rows: list[list[InlineKeyboardButton]] = [[button] for button in buttons]
     rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="choose_sport")])
 
     return InlineKeyboardMarkup(
