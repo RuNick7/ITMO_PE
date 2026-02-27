@@ -144,6 +144,29 @@ def _available_days_for_query(lessons: list[dict], query: str) -> list[int]:
     return sorted(days)
 
 
+def _lesson_interval(lesson: dict) -> tuple[datetime, datetime] | None:
+    raw_start = lesson.get("date")
+    if not raw_start:
+        return None
+    try:
+        start_dt = datetime.fromisoformat(str(raw_start))
+    except ValueError:
+        return None
+    raw_end = lesson.get("date_end")
+    if raw_end:
+        try:
+            end_dt = datetime.fromisoformat(str(raw_end))
+            return start_dt, end_dt
+        except ValueError:
+            pass
+    # Fallback: assume lesson is 1h 30m when date_end is absent.
+    return start_dt, start_dt + timedelta(minutes=90)
+
+
+def _intervals_overlap(a: tuple[datetime, datetime], b: tuple[datetime, datetime]) -> bool:
+    return a[0] < b[1] and b[0] < a[1]
+
+
 async def _cleanup_callback_message(callback: CallbackQuery) -> None:
     if callback.message is None:
         return
@@ -810,6 +833,41 @@ async def sport_pick_callback(callback: CallbackQuery) -> None:
     if callback.from_user is not None:
         PENDING_AUTOREG[callback.from_user.id] = selected_lesson
 
+    conflict_text = ""
+    selected_interval = _lesson_interval(selected_lesson)
+    if selected_interval is not None:
+        conflicts: list[dict] = []
+        selected_id = int(selected_lesson.get("id") or 0)
+        for day in (payload.get("result") or []):
+            if not isinstance(day, dict):
+                continue
+            day_lessons = day.get("lessons") or []
+            if not isinstance(day_lessons, list):
+                continue
+            for item in day_lessons:
+                if not isinstance(item, dict):
+                    continue
+                if not bool(item.get("signed")):
+                    continue
+                item_id = int(item.get("id") or 0)
+                if selected_id > 0 and item_id == selected_id:
+                    continue
+                item_interval = _lesson_interval(item)
+                if item_interval is None:
+                    continue
+                if _intervals_overlap(selected_interval, item_interval):
+                    conflicts.append(item)
+        if conflicts:
+            preview = "\n".join(
+                f"- {item.get('section_name')} | {_format_lesson_day_time(item.get('date'), item.get('time_slot_start'))}"
+                for item in conflicts[:3]
+            )
+            tail = "" if len(conflicts) <= 3 else f"\n... и ещё {len(conflicts) - 3}"
+            conflict_text = (
+                "\n\n⚠️ Внимание: есть пересечение с уже записанными занятиями:\n"
+                f"{preview}{tail}"
+            )
+
     if callback.message is not None:
         day_time = _format_lesson_day_time(
             selected_lesson.get("date"),
@@ -821,7 +879,8 @@ async def sport_pick_callback(callback: CallbackQuery) -> None:
             f"Тип: {_lesson_type_title(selected_lesson)}\n"
             f"День | Время: {day_time}\n"
             f"Мест всего: {selected_lesson.get('limit')}\n\n"
-            "Если хочешь, включи автозапись на такое же занятие на будущие недели.",
+            "Если хочешь, включи автозапись на такое же занятие на будущие недели."
+            f"{conflict_text}",
         )
         await callback.message.answer(
             "Подтвердить автозапись?",
@@ -949,6 +1008,45 @@ async def auto_bulk_yes_callback(callback: CallbackQuery) -> None:
         if callback.message is not None:
             await callback.message.answer(
                 "Сейчас нет доступных занятий под этот шаблон.",
+                reply_markup=to_menu_keyboard(),
+            )
+        return
+
+    # Warn about time overlaps with already signed lessons and skip conflicts.
+    signed_intervals: list[tuple[datetime, datetime]] = []
+    for lesson in lessons:
+        if not bool(lesson.get("signed")):
+            continue
+        interval = _lesson_interval(lesson)
+        if interval is not None:
+            signed_intervals.append(interval)
+    non_conflict_candidates: list[dict] = []
+    conflict_candidates: list[dict] = []
+    for lesson in candidates:
+        interval = _lesson_interval(lesson)
+        if interval is None:
+            non_conflict_candidates.append(lesson)
+            continue
+        if any(_intervals_overlap(interval, signed_interval) for signed_interval in signed_intervals):
+            conflict_candidates.append(lesson)
+            continue
+        non_conflict_candidates.append(lesson)
+    candidates = non_conflict_candidates
+    if conflict_candidates and callback.message is not None:
+        preview = "\n".join(
+            f"- {item.get('section_name')} | {_format_lesson_day_time(item.get('date'), item.get('time_slot_start'))}"
+            for item in conflict_candidates[:5]
+        )
+        more = "" if len(conflict_candidates) <= 5 else f"\n... и ещё {len(conflict_candidates) - 5}"
+        await callback.message.answer(
+            "⚠️ Найдены пересечения с уже записанными занятиями.\n"
+            "Эти слоты будут пропущены:\n"
+            f"{preview}{more}"
+        )
+    if not candidates:
+        if callback.message is not None:
+            await callback.message.answer(
+                "Все найденные слоты пересекаются с уже записанными занятиями.",
                 reply_markup=to_menu_keyboard(),
             )
         return
