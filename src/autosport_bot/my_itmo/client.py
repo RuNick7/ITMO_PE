@@ -11,11 +11,19 @@ class MyItmoClient:
     def __init__(self, access_token: str):
         self._headers = {"Authorization": f"Bearer {access_token}"}
 
-    async def get_sport_schedule(self, date_start: str, date_end: str, building_id: int = 273) -> dict[str, Any]:
+    async def get_sport_schedule(
+        self,
+        date_start: str,
+        date_end: str,
+        building_id: int | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"date_start": date_start, "date_end": date_end}
+        if building_id is not None:
+            params["building_id"] = building_id
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.get(
                 f"{self.base_url}/sport/sign/schedule",
-                params={"date_start": date_start, "date_end": date_end, "building_id": building_id},
+                params=params,
                 headers=self._headers,
             )
             response.raise_for_status()

@@ -30,9 +30,9 @@ class AutoEnrollWorker:
             return False
         if str(lesson.get("section_name") or "") != rule.section_name:
             return False
-        if str(lesson.get("time_slot_start") or "") != rule.time_slot_start:
+        if rule.time_slot_start and str(lesson.get("time_slot_start") or "") != rule.time_slot_start:
             return False
-        if int(lesson.get("type_id") or 0) != int(rule.type_id):
+        if int(rule.type_id) > 0 and int(lesson.get("type_id") or 0) != int(rule.type_id):
             return False
 
         raw_date = lesson.get("date")
@@ -41,7 +41,7 @@ class AutoEnrollWorker:
         lesson_date = datetime.fromisoformat(str(raw_date)).date()
         if rule.after_date and lesson_date <= datetime.fromisoformat(rule.after_date).date():
             return False
-        if lesson_date.weekday() != rule.day_code:
+        if 0 <= rule.day_code <= 6 and lesson_date.weekday() != rule.day_code:
             return False
         return True
 

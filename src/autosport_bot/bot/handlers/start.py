@@ -21,6 +21,8 @@ from autosport_bot.bot.keyboards import (
     weekly_limit_keyboard,
     settings_delete_confirm_keyboard,
     settings_keyboard,
+    subject_autoreg_mode_keyboard,
+    subject_catalog_keyboard,
     sport_lessons_keyboard,
     to_menu_keyboard,
 )
@@ -39,6 +41,8 @@ PENDING_AUTOREG: dict[int, dict] = {}
 PENDING_BULK_ENROLL: dict[int, AutoEnrollRule] = {}
 PENDING_CANCEL_ALL_RULE: dict[int, int] = {}
 PRIORITY_EDIT_WAITING: dict[int, list[int]] = {}
+PENDING_SUBJECT_MATCHES: dict[int, list[str]] = {}
+PENDING_SUBJECT_AUTOREG: dict[int, str] = {}
 
 
 def _reset_user_interaction_state(user_id: int) -> None:
@@ -51,6 +55,8 @@ def _reset_user_interaction_state(user_id: int) -> None:
     PENDING_BULK_ENROLL.pop(user_id, None)
     PENDING_CANCEL_ALL_RULE.pop(user_id, None)
     PRIORITY_EDIT_WAITING.pop(user_id, None)
+    PENDING_SUBJECT_MATCHES.pop(user_id, None)
+    PENDING_SUBJECT_AUTOREG.pop(user_id, None)
 
 
 def _legend_text() -> str:
@@ -144,6 +150,19 @@ async def _cleanup_callback_message(callback: CallbackQuery) -> None:
         pass
 
 
+def _friendly_schedule_error(exc: Exception) -> str:
+    if isinstance(exc, httpx.HTTPStatusError):
+        status_code = exc.response.status_code
+        if status_code == 403:
+            return (
+                "Похоже, у тебя сейчас нет доступа к записи на физру в my.itmo "
+                "(403 Forbidden). Обычно это значит, что физра ещё не назначена."
+            )
+        if status_code == 401:
+            return "Сессия истекла. Повтори вход: /login <itmo_login> <itmo_password>"
+    return f"Ошибка при получении расписания: {exc}"
+
+
 async def _fetch_lessons_for_user(telegram_id: int) -> tuple[list[dict], str | None]:
     if bot_context.repository is None:
         return [], "Ошибка: хранилище не инициализировано."
@@ -164,7 +183,7 @@ async def _fetch_lessons_for_user(telegram_id: int) -> tuple[list[dict], str | N
         payload = await request_schedule(tokens.access_token)
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code != 401:
-            return [], f"Ошибка при получении расписания: {exc}"
+            return [], _friendly_schedule_error(exc)
         if not tokens.refresh_token:
             return [], "Токен истёк. Повтори вход: /login <itmo_login> <itmo_password>"
 
@@ -184,9 +203,9 @@ async def _fetch_lessons_for_user(telegram_id: int) -> tuple[list[dict], str | N
         try:
             payload = await request_schedule(tokens.access_token)
         except Exception as retry_exc:
-            return [], f"Ошибка при получении расписания после refresh: {retry_exc}"
+            return [], _friendly_schedule_error(retry_exc)
     except Exception as exc:
-        return [], f"Ошибка при получении расписания: {exc}"
+        return [], _friendly_schedule_error(exc)
 
     lessons: list[dict] = []
     for day in (payload.get("result") or []):
@@ -197,6 +216,59 @@ async def _fetch_lessons_for_user(telegram_id: int) -> tuple[list[dict], str | N
             continue
         lessons.extend([item for item in day_lessons if isinstance(item, dict)])
     return lessons, None
+
+
+async def _fetch_subject_catalog_for_user(telegram_id: int) -> tuple[list[str], str | None]:
+    if bot_context.repository is None:
+        return [], "Ошибка: хранилище не инициализировано."
+    tokens = bot_context.repository.get_tokens(telegram_id)
+    if tokens is None or not tokens.access_token:
+        return [], "Сначала войди в ITMO.ID: /login <itmo_login> <itmo_password>"
+
+    async def request_schedule(access_token: str) -> dict:
+        client = MyItmoClient(access_token)
+        date_start = date.today() - timedelta(days=365)
+        date_end = date.today() + timedelta(days=365)
+        return await client.get_sport_schedule(
+            date_start=date_start.isoformat(),
+            date_end=date_end.isoformat(),
+        )
+
+    try:
+        payload = await request_schedule(tokens.access_token)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code != 401:
+            return [], _friendly_schedule_error(exc)
+        if not tokens.refresh_token:
+            return [], "Токен истёк. Повтори вход: /login <itmo_login> <itmo_password>"
+        auth_service = ItmoAuthService(get_settings())
+        try:
+            refreshed = await auth_service.refresh(tokens.refresh_token)
+        except Exception:
+            return [], "Не удалось обновить токен. Повтори вход: /login <itmo_login> <itmo_password>"
+        tokens.access_token = refreshed.access_token
+        tokens.refresh_token = refreshed.refresh_token
+        tokens.access_expires_at = refreshed.access_expires_at
+        tokens.refresh_expires_at = refreshed.refresh_expires_at
+        bot_context.repository.save_tokens(tokens)
+        try:
+            payload = await request_schedule(tokens.access_token)
+        except Exception as retry_exc:
+            return [], _friendly_schedule_error(retry_exc)
+    except Exception as exc:
+        return [], _friendly_schedule_error(exc)
+
+    subjects: set[str] = set()
+    for day in (payload.get("result") or []):
+        if not isinstance(day, dict):
+            continue
+        for item in (day.get("lessons") or []):
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("section_name") or "").strip()
+            if name:
+                subjects.add(name)
+    return sorted(subjects), None
 
 
 async def _authenticate_and_save(
@@ -431,7 +503,7 @@ async def sport_command(message: Message) -> None:
             date_end=date_end.isoformat(),
         )
     except Exception as exc:
-        await message.answer(f"Ошибка при получении расписания: {exc}")
+        await message.answer(_friendly_schedule_error(exc))
         return
 
     lessons: list[dict] = []
@@ -522,6 +594,71 @@ async def choose_list_callback(callback: CallbackQuery) -> None:
         await callback.message.answer(
             "Выбери день недели:",
             reply_markup=choose_day_keyboard(),
+        )
+
+
+@router.callback_query(lambda c: c.data is not None and c.data.startswith("subject_catalog_pick:"))
+async def subject_catalog_pick_callback(callback: CallbackQuery) -> None:
+    await callback.answer()
+    await _cleanup_callback_message(callback)
+    if callback.from_user is None:
+        if callback.message is not None:
+            await callback.message.answer("Ошибка: не удалось определить пользователя Telegram.")
+        return
+    try:
+        idx = int(callback.data.split(":", maxsplit=1)[1])
+    except Exception:
+        if callback.message is not None:
+            await callback.message.answer("Некорректный выбор предмета.")
+        return
+    matches = PENDING_SUBJECT_MATCHES.get(callback.from_user.id) or []
+    if idx < 0 or idx >= len(matches):
+        if callback.message is not None:
+            await callback.message.answer("Список устарел, попробуй поиск ещё раз.")
+        return
+    subject = matches[idx]
+    PENDING_SUBJECT_AUTOREG[callback.from_user.id] = subject
+    if callback.message is not None:
+        await callback.message.answer(
+            f"Предмет: {subject}\nВыбери режим автозаписи:",
+            reply_markup=subject_autoreg_mode_keyboard(),
+        )
+
+
+@router.callback_query(lambda c: c.data is not None and c.data.startswith("subject_autoreg:"))
+async def subject_autoreg_callback(callback: CallbackQuery) -> None:
+    await callback.answer()
+    await _cleanup_callback_message(callback)
+    if callback.from_user is None:
+        if callback.message is not None:
+            await callback.message.answer("Ошибка: не удалось определить пользователя Telegram.")
+        return
+    if bot_context.repository is None:
+        if callback.message is not None:
+            await callback.message.answer("Ошибка: хранилище не инициализировано.")
+        return
+    mode = callback.data.split(":", maxsplit=1)[1]
+    subject = PENDING_SUBJECT_AUTOREG.pop(callback.from_user.id, "")
+    PENDING_SUBJECT_MATCHES.pop(callback.from_user.id, None)
+    if not subject:
+        if callback.message is not None:
+            await callback.message.answer("Сначала выбери предмет из списка.")
+        return
+    rule = AutoEnrollRule(
+        chat_id=callback.from_user.id,
+        enabled=True,
+        section_name=subject,
+        day_code=-1,
+        time_slot_start="",
+        type_id=1 if mode == "open" else 0,
+        after_date=date.today().isoformat(),
+    )
+    bot_context.repository.upsert_auto_enroll_rule(rule)
+    mode_text = "только открытые занятия" if mode == "open" else "любые занятия"
+    if callback.message is not None:
+        await callback.message.answer(
+            f"✅ Автозапись включена: {subject}\nРежим: {mode_text}.",
+            reply_markup=to_menu_keyboard(),
         )
 
 
@@ -642,7 +779,7 @@ async def sport_pick_callback(callback: CallbackQuery) -> None:
         payload = await client.get_sport_schedule(date_start=date_start.isoformat(), date_end=date_end.isoformat())
     except Exception as exc:
         if callback.message is not None:
-            await callback.message.answer(f"Ошибка при получении расписания: {exc}")
+            await callback.message.answer(_friendly_schedule_error(exc))
         return
 
     selected_lesson: dict | None = None
@@ -1134,9 +1271,23 @@ async def text_search_handler(message: Message) -> None:
         return
     available_days = _available_days_for_query(lessons, query)
     if not available_days:
+        subjects, catalog_error = await _fetch_subject_catalog_for_user(message.from_user.id)
+        if catalog_error:
+            await message.answer(catalog_error, reply_markup=to_menu_keyboard())
+            return
+        q = query.lower()
+        matches = [name for name in subjects if q in name.lower()]
+        if not matches:
+            await message.answer(
+                "По этому названию сейчас нет доступных занятий и похожих предметов в каталоге.",
+                reply_markup=to_menu_keyboard(),
+            )
+            return
+        PENDING_SUBJECT_MATCHES[message.from_user.id] = matches[:20]
         await message.answer(
-            "По этому названию сейчас нет доступных занятий.",
-            reply_markup=to_menu_keyboard(),
+            "Сейчас в доступном расписании нет подходящих слотов.\n"
+            "Но предмет найден в общем списке. Выбери его, чтобы включить автозапись на будущее:",
+            reply_markup=subject_catalog_keyboard(matches),
         )
         return
     SEARCH_DAY_QUERY[message.from_user.id] = query

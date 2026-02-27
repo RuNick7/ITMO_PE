@@ -115,23 +115,20 @@ def choose_day_keyboard(available_days: list[int] | None = None) -> InlineKeyboa
 
 
 def choose_time_keyboard() -> InlineKeyboardMarkup:
-    rows: list[list[InlineKeyboardButton]] = []
-    for hour in range(8, 22):
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=f"С {hour:02d}:00 до {hour + 1:02d}:00",
-                    callback_data=f"choose_time:h{hour:02d}",
-                )
-            ]
-        )
-    rows.extend(
-        [
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="С 08:10", callback_data="choose_time:08:10")],
+            [InlineKeyboardButton(text="С 09:50", callback_data="choose_time:09:50")],
+            [InlineKeyboardButton(text="С 11:30", callback_data="choose_time:11:30")],
+            [InlineKeyboardButton(text="С 13:30", callback_data="choose_time:13:30")],
+            [InlineKeyboardButton(text="С 15:30", callback_data="choose_time:15:30")],
+            [InlineKeyboardButton(text="С 17:00", callback_data="choose_time:17:00")],
+            [InlineKeyboardButton(text="С 19:00", callback_data="choose_time:19:00")],
+            [InlineKeyboardButton(text="С 21:00", callback_data="choose_time:21:00")],
             [InlineKeyboardButton(text="Любое время", callback_data="choose_time:any")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="choose_sport")],
         ]
     )
-    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def auto_confirm_keyboard() -> InlineKeyboardMarkup:
@@ -188,6 +185,26 @@ def back_to_choose_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="choose_sport")],
+        ]
+    )
+
+
+def subject_catalog_keyboard(subjects: list[str]) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for idx, subject in enumerate(subjects[:20]):
+        rows.append(
+            [InlineKeyboardButton(text=subject[:64], callback_data=f"subject_catalog_pick:{idx}")]
+        )
+    rows.append([InlineKeyboardButton(text="🏠 В меню", callback_data="back_main")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def subject_autoreg_mode_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Автозапись на любое занятие", callback_data="subject_autoreg:any")],
+            [InlineKeyboardButton(text="🩵 Только открытое занятие", callback_data="subject_autoreg:open")],
+            [InlineKeyboardButton(text="🏠 В меню", callback_data="back_main")],
         ]
     )
 
