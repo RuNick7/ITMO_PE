@@ -64,7 +64,6 @@ def settings_delete_confirm_keyboard() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="✅ Да, удалить", callback_data="settings_delete_itmo_yes")],
             [InlineKeyboardButton(text="❌ Нет, отмена", callback_data="settings_delete_itmo_no")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="settings_open")],
         ]
     )
 
@@ -161,7 +160,6 @@ def auto_bulk_offer_keyboard() -> InlineKeyboardMarkup:
                     callback_data="auto_bulk_no",
                 )
             ],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="choose_sport")],
         ]
     )
 
@@ -181,7 +179,14 @@ def my_sport_cancel_confirm_keyboard() -> InlineKeyboardMarkup:
                     callback_data="my_sport_cancel_all_no",
                 )
             ],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="my_sport_open")],
+        ]
+    )
+
+
+def back_to_choose_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="choose_sport")],
         ]
     )
 

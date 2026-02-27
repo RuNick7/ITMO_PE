@@ -8,6 +8,7 @@ import httpx
 from autosport_bot.bot import context as bot_context
 from autosport_bot.bot.keyboards import (
     auto_bulk_offer_keyboard,
+    back_to_choose_keyboard,
     auto_confirm_keyboard,
     choose_day_keyboard,
     choose_mode_keyboard,
@@ -407,7 +408,10 @@ async def sport_command(message: Message) -> None:
     lessons = _filter_lessons(lessons, day_code="any", time_code="any")
 
     if not lessons:
-        await message.answer("На выбранный период доступных занятий не найдено.")
+        await message.answer(
+            "На выбранный период доступных занятий не найдено.",
+            reply_markup=main_menu_keyboard(),
+        )
         return
 
     lines: list[str] = []
@@ -510,7 +514,10 @@ async def choose_day_callback(callback: CallbackQuery) -> None:
         )
         if not filtered_lessons:
             if callback.message is not None:
-                await callback.message.answer("Под выбранные день и название занятия ничего не найдено.")
+                await callback.message.answer(
+                    "Под выбранные день и название занятия ничего не найдено.",
+                    reply_markup=back_to_choose_keyboard(),
+                )
             return
         if callback.message is not None:
             await callback.message.answer(
@@ -556,7 +563,10 @@ async def choose_time_callback(callback: CallbackQuery) -> None:
     )
     if not filtered_lessons:
         if callback.message is not None:
-            await callback.message.answer("Под выбранные день/время занятия не найдены.")
+            await callback.message.answer(
+                "Под выбранные день/время занятия не найдены.",
+                reply_markup=back_to_choose_keyboard(),
+            )
         return
     if callback.message is not None:
         await callback.message.answer(
@@ -756,7 +766,10 @@ async def auto_bulk_yes_callback(callback: CallbackQuery) -> None:
 
     if not candidates:
         if callback.message is not None:
-            await callback.message.answer("Сейчас нет доступных занятий под этот шаблон.")
+            await callback.message.answer(
+                "Сейчас нет доступных занятий под этот шаблон.",
+                reply_markup=main_menu_keyboard(),
+            )
         return
 
     if bot_context.repository is None:
@@ -807,7 +820,10 @@ async def my_sport_open_callback(callback: CallbackQuery) -> None:
     rules = bot_context.repository.list_user_auto_enroll_rules(callback.from_user.id)
     if not rules:
         if callback.message is not None:
-            await callback.message.answer("У тебя пока нет активных автозаписей.")
+            await callback.message.answer(
+                "У тебя пока нет активных автозаписей.",
+                reply_markup=main_menu_keyboard(),
+            )
         return
 
     items = [(rule.id, f"🏅 {rule.section_name}") for rule in rules]
@@ -982,7 +998,10 @@ async def my_sport_cancel_all_yes_callback(callback: CallbackQuery) -> None:
 
     if not cancel_ids:
         if callback.message is not None:
-            await callback.message.answer("Сейчас нет активных записей, подходящих под это правило.")
+            await callback.message.answer(
+                "Сейчас нет активных записей, подходящих под это правило.",
+                reply_markup=main_menu_keyboard(),
+            )
         return
 
     tokens = bot_context.repository.get_tokens(callback.from_user.id)
@@ -1075,7 +1094,10 @@ async def text_search_handler(message: Message) -> None:
         return
     available_days = _available_days_for_query(lessons, query)
     if not available_days:
-        await message.answer("По этому названию сейчас нет доступных занятий.")
+        await message.answer(
+            "По этому названию сейчас нет доступных занятий.",
+            reply_markup=main_menu_keyboard(),
+        )
         return
     SEARCH_DAY_QUERY[message.from_user.id] = query
     await message.answer(
@@ -1177,7 +1199,10 @@ async def settings_priorities_callback(callback: CallbackQuery) -> None:
     rules = bot_context.repository.list_user_auto_enroll_rules(callback.from_user.id)
     if not rules:
         if callback.message is not None:
-            await callback.message.answer("У тебя нет активных автозаписей для приоритизации.")
+            await callback.message.answer(
+                "У тебя нет активных автозаписей для приоритизации.",
+                reply_markup=main_menu_keyboard(),
+            )
         return
     PRIORITY_EDIT_WAITING[callback.from_user.id] = [rule.id for rule in rules]
     lines = [f"{idx}. {rule.section_name} | {rule.time_slot_start}" for idx, rule in enumerate(rules, start=1)]
@@ -1221,7 +1246,10 @@ async def settings_delete_itmo_no_callback(callback: CallbackQuery) -> None:
     await callback.answer()
     await _cleanup_callback_message(callback)
     if callback.message is not None:
-        await callback.message.answer("Ок, данные my.itmo оставил.")
+        await callback.message.answer(
+            "Ок, данные my.itmo оставил.",
+            reply_markup=main_menu_keyboard(),
+        )
 
 
 @router.callback_query(lambda c: c.data == "settings_delete_itmo_yes")
