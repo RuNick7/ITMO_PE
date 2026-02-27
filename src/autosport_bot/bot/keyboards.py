@@ -38,6 +38,14 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+def to_menu_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🏠 В меню", callback_data="back_main")],
+        ]
+    )
+
+
 def help_contact_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[

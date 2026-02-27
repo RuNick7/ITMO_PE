@@ -8,8 +8,8 @@ import httpx
 from autosport_bot.bot import context as bot_context
 from autosport_bot.bot.keyboards import (
     auto_bulk_offer_keyboard,
-    back_to_choose_keyboard,
     auto_confirm_keyboard,
+    back_to_choose_keyboard,
     choose_day_keyboard,
     choose_mode_keyboard,
     choose_time_keyboard,
@@ -22,6 +22,7 @@ from autosport_bot.bot.keyboards import (
     settings_delete_confirm_keyboard,
     settings_keyboard,
     sport_lessons_keyboard,
+    to_menu_keyboard,
 )
 from autosport_bot.core.config import get_settings
 from autosport_bot.my_itmo.auth import ItmoAuthService
@@ -410,7 +411,7 @@ async def sport_command(message: Message) -> None:
     if not lessons:
         await message.answer(
             "На выбранный период доступных занятий не найдено.",
-            reply_markup=main_menu_keyboard(),
+            reply_markup=to_menu_keyboard(),
         )
         return
 
@@ -768,7 +769,7 @@ async def auto_bulk_yes_callback(callback: CallbackQuery) -> None:
         if callback.message is not None:
             await callback.message.answer(
                 "Сейчас нет доступных занятий под этот шаблон.",
-                reply_markup=main_menu_keyboard(),
+                reply_markup=to_menu_keyboard(),
             )
         return
 
@@ -822,7 +823,7 @@ async def my_sport_open_callback(callback: CallbackQuery) -> None:
         if callback.message is not None:
             await callback.message.answer(
                 "У тебя пока нет активных автозаписей.",
-                reply_markup=main_menu_keyboard(),
+                reply_markup=to_menu_keyboard(),
             )
         return
 
@@ -1000,7 +1001,7 @@ async def my_sport_cancel_all_yes_callback(callback: CallbackQuery) -> None:
         if callback.message is not None:
             await callback.message.answer(
                 "Сейчас нет активных записей, подходящих под это правило.",
-                reply_markup=main_menu_keyboard(),
+                reply_markup=to_menu_keyboard(),
             )
         return
 
@@ -1096,7 +1097,7 @@ async def text_search_handler(message: Message) -> None:
     if not available_days:
         await message.answer(
             "По этому названию сейчас нет доступных занятий.",
-            reply_markup=main_menu_keyboard(),
+            reply_markup=to_menu_keyboard(),
         )
         return
     SEARCH_DAY_QUERY[message.from_user.id] = query
@@ -1201,7 +1202,7 @@ async def settings_priorities_callback(callback: CallbackQuery) -> None:
         if callback.message is not None:
             await callback.message.answer(
                 "У тебя нет активных автозаписей для приоритизации.",
-                reply_markup=main_menu_keyboard(),
+                reply_markup=to_menu_keyboard(),
             )
         return
     PRIORITY_EDIT_WAITING[callback.from_user.id] = [rule.id for rule in rules]
@@ -1248,7 +1249,7 @@ async def settings_delete_itmo_no_callback(callback: CallbackQuery) -> None:
     if callback.message is not None:
         await callback.message.answer(
             "Ок, данные my.itmo оставил.",
-            reply_markup=main_menu_keyboard(),
+            reply_markup=to_menu_keyboard(),
         )
 
 
