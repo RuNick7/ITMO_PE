@@ -219,6 +219,15 @@ def subject_autoreg_mode_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+def post_enroll_next_step_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔁 Записаться ещё на этот предмет", callback_data="post_enroll_same")],
+            [InlineKeyboardButton(text="🏃 Записаться на другой предмет", callback_data="choose_sport")],
+        ]
+    )
+
+
 def my_sport_list_keyboard(items: list[tuple[int, str]]) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for rule_id, title in items:

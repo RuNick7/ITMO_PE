@@ -29,11 +29,13 @@ class MyItmoClient:
             response.raise_for_status()
             return response.json()
 
-    async def sign_for_lesson(self, lesson_id: int) -> dict[str, Any]:
+    async def sign_for_lessons(self, lesson_ids: list[int]) -> dict[str, Any]:
+        if not lesson_ids:
+            return {"ok": True, "already_signed": False, "payload": {}}
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.post(
                 f"{self.base_url}/sport/sign/schedule/lessons",
-                json=[lesson_id],
+                json=lesson_ids,
                 headers=self._headers,
             )
             try:
@@ -55,6 +57,9 @@ class MyItmoClient:
             except Exception:
                 payload = {}
             return {"ok": True, "already_signed": False, "payload": payload}
+
+    async def sign_for_lesson(self, lesson_id: int) -> dict[str, Any]:
+        return await self.sign_for_lessons([lesson_id])
 
     async def sign_out_lessons(self, lesson_ids: list[int]) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=15.0) as client:

@@ -18,6 +18,7 @@ from autosport_bot.bot.keyboards import (
     my_sport_cancel_confirm_keyboard,
     my_sport_detail_keyboard,
     my_sport_list_keyboard,
+    post_enroll_next_step_keyboard,
     weekly_limit_keyboard,
     settings_delete_confirm_keyboard,
     settings_keyboard,
@@ -39,6 +40,7 @@ AUTH_WAITING_LOGIN: set[int] = set()
 AUTH_WAITING_PASSWORD: dict[int, str] = {}
 PENDING_AUTOREG: dict[int, dict] = {}
 PENDING_BULK_ENROLL: dict[int, AutoEnrollRule] = {}
+PENDING_POST_ENROLL_RULE: dict[int, AutoEnrollRule] = {}
 PENDING_CANCEL_ALL_RULE: dict[int, int] = {}
 PRIORITY_EDIT_WAITING: dict[int, list[int]] = {}
 PENDING_SUBJECT_MATCHES: dict[int, list[str]] = {}
@@ -53,6 +55,7 @@ def _reset_user_interaction_state(user_id: int) -> None:
     AUTH_WAITING_PASSWORD.pop(user_id, None)
     PENDING_AUTOREG.pop(user_id, None)
     PENDING_BULK_ENROLL.pop(user_id, None)
+    PENDING_POST_ENROLL_RULE.pop(user_id, None)
     PENDING_CANCEL_ALL_RULE.pop(user_id, None)
     PRIORITY_EDIT_WAITING.pop(user_id, None)
     PENDING_SUBJECT_MATCHES.pop(user_id, None)
@@ -961,24 +964,70 @@ async def auto_bulk_yes_callback(callback: CallbackQuery) -> None:
         return
 
     client = MyItmoClient(tokens.access_token)
-    success = 0
-    failed = 0
-    for lesson in candidates:
-        lesson_id = int(lesson.get("id") or 0)
-        if lesson_id <= 0:
-            continue
-        try:
-            result = await client.sign_for_lesson(lesson_id)
-            if result.get("ok"):
-                success += 1
-            else:
-                failed += 1
-        except Exception:
-            failed += 1
+    lesson_ids = [int(lesson.get("id") or 0) for lesson in candidates]
+    lesson_ids = [lesson_id for lesson_id in lesson_ids if lesson_id > 0]
+    if not lesson_ids:
+        if callback.message is not None:
+            await callback.message.answer("Не нашёл корректных ID занятий для записи.")
+        return
+    try:
+        result = await client.sign_for_lessons(lesson_ids)
+        success = len(lesson_ids) if result.get("ok") else 0
+        failed = 0 if result.get("ok") else len(lesson_ids)
+    except Exception:
+        success = 0
+        failed = len(lesson_ids)
 
     if callback.message is not None:
         await callback.message.answer(
             f"Готово. Попытался записать на текущие занятия: успешно {success}, ошибок {failed}."
+        )
+        PENDING_POST_ENROLL_RULE[callback.from_user.id] = rule
+        await callback.message.answer(
+            "Что дальше?",
+            reply_markup=post_enroll_next_step_keyboard(),
+        )
+
+
+@router.callback_query(lambda c: c.data == "post_enroll_same")
+async def post_enroll_same_callback(callback: CallbackQuery) -> None:
+    await callback.answer()
+    await _cleanup_callback_message(callback)
+    if callback.from_user is None:
+        if callback.message is not None:
+            await callback.message.answer("Ошибка: не удалось определить пользователя Telegram.")
+        return
+    rule = PENDING_POST_ENROLL_RULE.get(callback.from_user.id)
+    if rule is None:
+        if callback.message is not None:
+            await callback.message.answer("Сначала выполни запись, потом выбери следующий шаг.")
+        return
+    lessons, error = await _fetch_lessons_for_user(callback.from_user.id)
+    if error:
+        if callback.message is not None:
+            await callback.message.answer(error)
+        return
+    candidates: list[dict] = []
+    for lesson in lessons:
+        if int(lesson.get("section_level") or 0) == 2:
+            continue
+        can_sign = lesson.get("can_sign_in") or {}
+        if isinstance(can_sign, dict) and not bool(can_sign.get("can_sign_in")):
+            continue
+        if str(lesson.get("section_name") or "") != rule.section_name:
+            continue
+        candidates.append(lesson)
+    if not candidates:
+        if callback.message is not None:
+            await callback.message.answer(
+                "Сейчас нет доступных слотов на этот предмет.",
+                reply_markup=to_menu_keyboard(),
+            )
+        return
+    if callback.message is not None:
+        await callback.message.answer(
+            "Нашёл доступные занятия по этому предмету. Выбери:",
+            reply_markup=sport_lessons_keyboard(candidates, show_time=True),
         )
 
 
