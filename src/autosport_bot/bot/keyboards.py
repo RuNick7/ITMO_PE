@@ -42,6 +42,7 @@ def help_contact_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📩 Связаться", url="https://t.me/nitratex1")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_main")],
         ]
     )
 
@@ -53,6 +54,7 @@ def settings_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🎯 Приоритеты автозаписи", callback_data="settings_priorities")],
             [InlineKeyboardButton(text="📅 Лимит записей в неделю", callback_data="settings_weekly_limit")],
             [InlineKeyboardButton(text="🗑️ Удалить данные my.itmo", callback_data="settings_delete_itmo")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_main")],
         ]
     )
 
@@ -62,6 +64,7 @@ def settings_delete_confirm_keyboard() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="✅ Да, удалить", callback_data="settings_delete_itmo_yes")],
             [InlineKeyboardButton(text="❌ Нет, отмена", callback_data="settings_delete_itmo_no")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="settings_open")],
         ]
     )
 
@@ -73,6 +76,7 @@ def choose_mode_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="Ввести название", callback_data="choose_input_name"),
                 InlineKeyboardButton(text="Выбрать из списка", callback_data="choose_list"),
             ],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_main")],
         ]
     )
 
@@ -99,6 +103,7 @@ def choose_day_keyboard(available_days: list[int] | None = None) -> InlineKeyboa
             row.append(right)
         rows.append(row)
     rows.append([InlineKeyboardButton(text="Любой", callback_data="choose_day:any")])
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="choose_sport")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -124,6 +129,7 @@ def choose_time_keyboard() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(text="Любое время", callback_data="choose_time:any"),
             ],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="choose_sport")],
         ]
     )
 
@@ -134,7 +140,8 @@ def auto_confirm_keyboard() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(text="✅ Подтвердить автозапись", callback_data="auto_confirm"),
                 InlineKeyboardButton(text="❌ Отмена", callback_data="auto_cancel"),
-            ]
+            ],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="choose_sport")],
         ]
     )
 
@@ -154,6 +161,7 @@ def auto_bulk_offer_keyboard() -> InlineKeyboardMarkup:
                     callback_data="auto_bulk_no",
                 )
             ],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="choose_sport")],
         ]
     )
 
@@ -173,6 +181,7 @@ def my_sport_cancel_confirm_keyboard() -> InlineKeyboardMarkup:
                     callback_data="my_sport_cancel_all_no",
                 )
             ],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="my_sport_open")],
         ]
     )
 
@@ -188,7 +197,10 @@ def my_sport_list_keyboard(items: list[tuple[int, str]]) -> InlineKeyboardMarkup
                 )
             ]
         )
-    return InlineKeyboardMarkup(inline_keyboard=rows or [[InlineKeyboardButton(text="Пусто", callback_data="noop")]])
+    if not rows:
+        rows = [[InlineKeyboardButton(text="Пусто", callback_data="noop")]]
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back_main")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def my_sport_detail_keyboard(rule_id: int) -> InlineKeyboardMarkup:
@@ -205,7 +217,8 @@ def my_sport_detail_keyboard(rule_id: int) -> InlineKeyboardMarkup:
                     text="❌ Отключить автозапись",
                     callback_data=f"my_sport_disable:{rule_id}",
                 )
-            ]
+            ],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="my_sport_open")],
         ]
     )
 
@@ -223,6 +236,7 @@ def weekly_limit_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="5", callback_data="settings_weekly_limit_set:5"),
                 InlineKeyboardButton(text="6", callback_data="settings_weekly_limit_set:6"),
             ],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="settings_open")],
         ]
     )
 
@@ -244,6 +258,7 @@ def sport_lessons_keyboard(lessons: list[dict], show_time: bool = False) -> Inli
     rows: list[list[InlineKeyboardButton]] = []
     for idx in range(0, len(buttons), 2):
         rows.append(buttons[idx:idx + 2])
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="choose_sport")])
 
     return InlineKeyboardMarkup(
         inline_keyboard=rows or [[InlineKeyboardButton(text="Нет данных", callback_data="noop")]]

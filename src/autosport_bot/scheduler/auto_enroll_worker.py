@@ -148,12 +148,12 @@ class AutoEnrollWorker:
                         raise RuntimeError("sign_for_lesson returned not ok")
                     self._repo.set_auto_enroll_last_lesson(rule.id, lesson_id)
                     signed_per_week[week_key] = signed_per_week.get(week_key, 0) + 1
+                    day_time = self._format_lesson_day_time(selected)
                     await bot.send_message(
                         chat_id=rule.chat_id,
                         text=(
                             "✅ Автозапись выполнена!\n"
-                            f"{selected.get('section_name')} | {selected.get('date')} {selected.get('time_slot_start')}\n"
-                            f"ID: {lesson_id}"
+                            f"{selected.get('section_name')} | {day_time}"
                         ),
                     )
                 except Exception as exc:
@@ -186,6 +186,19 @@ class AutoEnrollWorker:
                 continue
             counts[week_key] += 1
         return counts
+
+    @staticmethod
+    def _format_lesson_day_time(lesson: dict) -> str:
+        day_names = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+        raw_date = lesson.get("date")
+        raw_time = str(lesson.get("time_slot_start") or "--:--")
+        if not raw_date:
+            return f"— | {raw_time}"
+        try:
+            dt = datetime.fromisoformat(str(raw_date))
+        except ValueError:
+            return f"— | {raw_time}"
+        return f"{day_names[dt.weekday()]} | {dt.strftime('%d.%m.%Y')} | {raw_time}"
 
     def stop(self) -> None:
         self._running = False

@@ -39,6 +39,18 @@ PENDING_CANCEL_ALL_RULE: dict[int, int] = {}
 PRIORITY_EDIT_WAITING: dict[int, list[int]] = {}
 
 
+def _reset_user_interaction_state(user_id: int) -> None:
+    SEARCH_BY_NAME_WAITING.discard(user_id)
+    SEARCH_DAY_QUERY.pop(user_id, None)
+    LIST_SELECTION_CONTEXT.pop(user_id, None)
+    AUTH_WAITING_LOGIN.discard(user_id)
+    AUTH_WAITING_PASSWORD.pop(user_id, None)
+    PENDING_AUTOREG.pop(user_id, None)
+    PENDING_BULK_ENROLL.pop(user_id, None)
+    PENDING_CANCEL_ALL_RULE.pop(user_id, None)
+    PRIORITY_EDIT_WAITING.pop(user_id, None)
+
+
 def _legend_text() -> str:
     return (
         "Легенда:\n"
@@ -118,6 +130,16 @@ def _available_days_for_query(lessons: list[dict], query: str) -> list[int]:
             continue
         days.add(item_date.weekday())
     return sorted(days)
+
+
+async def _cleanup_callback_message(callback: CallbackQuery) -> None:
+    if callback.message is None:
+        return
+    try:
+        await callback.message.delete()
+    except Exception:
+        # Message can be too old/non-deletable; keep flow working.
+        pass
 
 
 async def _fetch_lessons_for_user(telegram_id: int) -> tuple[list[dict], str | None]:
@@ -260,6 +282,9 @@ def _filter_lessons(
 
 @router.message(CommandStart())
 async def start_command(message: Message) -> None:
+    if message.from_user is not None:
+        # /start should cancel any in-progress flow to avoid mixed states.
+        _reset_user_interaction_state(message.from_user.id)
     if bot_context.repository is not None and message.from_user is not None:
         bot_context.repository.ensure_user(
             telegram_id=message.from_user.id,
@@ -410,6 +435,7 @@ async def choose_command(message: Message) -> None:
 @router.callback_query(lambda c: c.data == "choose_sport")
 async def choose_sport_callback(callback: CallbackQuery) -> None:
     await callback.answer()
+    await _cleanup_callback_message(callback)
     if callback.message is not None:
         await callback.message.answer(
             "Как хочешь выбрать занятие?",
@@ -417,9 +443,23 @@ async def choose_sport_callback(callback: CallbackQuery) -> None:
         )
 
 
+@router.callback_query(lambda c: c.data == "back_main")
+async def back_main_callback(callback: CallbackQuery) -> None:
+    await callback.answer()
+    if callback.from_user is not None:
+        _reset_user_interaction_state(callback.from_user.id)
+    await _cleanup_callback_message(callback)
+    if callback.message is not None:
+        await callback.message.answer(
+            "Главное меню:",
+            reply_markup=main_menu_keyboard(),
+        )
+
+
 @router.callback_query(lambda c: c.data == "choose_input_name")
 async def choose_input_name_callback(callback: CallbackQuery) -> None:
     await callback.answer()
+    await _cleanup_callback_message(callback)
     if callback.from_user is not None:
         SEARCH_BY_NAME_WAITING.add(callback.from_user.id)
     if callback.message is not None:
@@ -429,6 +469,7 @@ async def choose_input_name_callback(callback: CallbackQuery) -> None:
 @router.callback_query(lambda c: c.data == "choose_list")
 async def choose_list_callback(callback: CallbackQuery) -> None:
     await callback.answer()
+    await _cleanup_callback_message(callback)
     if callback.from_user is None:
         if callback.message is not None:
             await callback.message.answer("Ошибка: не удалось определить пользователя Telegram.")
@@ -445,6 +486,7 @@ async def choose_list_callback(callback: CallbackQuery) -> None:
 @router.callback_query(lambda c: c.data is not None and c.data.startswith("choose_day:"))
 async def choose_day_callback(callback: CallbackQuery) -> None:
     await callback.answer()
+    await _cleanup_callback_message(callback)
     if callback.from_user is None:
         if callback.message is not None:
             await callback.message.answer("Ошибка: не удалось определить пользователя Telegram.")
@@ -490,6 +532,7 @@ async def choose_day_callback(callback: CallbackQuery) -> None:
 @router.callback_query(lambda c: c.data is not None and c.data.startswith("choose_time:"))
 async def choose_time_callback(callback: CallbackQuery) -> None:
     await callback.answer()
+    await _cleanup_callback_message(callback)
     if callback.from_user is None:
         if callback.message is not None:
             await callback.message.answer("Ошибка: не удалось определить пользователя Telegram.")
@@ -525,6 +568,7 @@ async def choose_time_callback(callback: CallbackQuery) -> None:
 @router.callback_query(lambda c: c.data is not None and c.data.startswith("sport_pick:"))
 async def sport_pick_callback(callback: CallbackQuery) -> None:
     await callback.answer()
+    await _cleanup_callback_message(callback)
     if bot_context.repository is None:
         if callback.message is not None:
             await callback.message.answer("Ошибка: хранилище не инициализировано.")
@@ -597,6 +641,7 @@ async def sport_pick_callback(callback: CallbackQuery) -> None:
 @router.callback_query(lambda c: c.data == "auto_cancel")
 async def auto_cancel_callback(callback: CallbackQuery) -> None:
     await callback.answer()
+    await _cleanup_callback_message(callback)
     if callback.from_user is not None:
         PENDING_AUTOREG.pop(callback.from_user.id, None)
     if callback.message is not None:
@@ -606,6 +651,7 @@ async def auto_cancel_callback(callback: CallbackQuery) -> None:
 @router.callback_query(lambda c: c.data == "auto_confirm")
 async def auto_confirm_callback(callback: CallbackQuery) -> None:
     await callback.answer()
+    await _cleanup_callback_message(callback)
     if callback.from_user is None:
         if callback.message is not None:
             await callback.message.answer("Ошибка: не удалось определить пользователя Telegram.")
@@ -656,6 +702,7 @@ async def auto_confirm_callback(callback: CallbackQuery) -> None:
 @router.callback_query(lambda c: c.data == "auto_bulk_no")
 async def auto_bulk_no_callback(callback: CallbackQuery) -> None:
     await callback.answer()
+    await _cleanup_callback_message(callback)
     if callback.from_user is not None:
         PENDING_BULK_ENROLL.pop(callback.from_user.id, None)
     if callback.message is not None:
@@ -665,6 +712,7 @@ async def auto_bulk_no_callback(callback: CallbackQuery) -> None:
 @router.callback_query(lambda c: c.data == "auto_bulk_yes")
 async def auto_bulk_yes_callback(callback: CallbackQuery) -> None:
     await callback.answer()
+    await _cleanup_callback_message(callback)
     if callback.from_user is None:
         if callback.message is not None:
             await callback.message.answer("Ошибка: не удалось определить пользователя Telegram.")
@@ -746,6 +794,7 @@ async def auto_bulk_yes_callback(callback: CallbackQuery) -> None:
 @router.callback_query(lambda c: c.data == "my_sport_open")
 async def my_sport_open_callback(callback: CallbackQuery) -> None:
     await callback.answer()
+    await _cleanup_callback_message(callback)
     if callback.from_user is None:
         if callback.message is not None:
             await callback.message.answer("Ошибка: не удалось определить пользователя Telegram.")
@@ -773,6 +822,7 @@ async def my_sport_open_callback(callback: CallbackQuery) -> None:
 @router.callback_query(lambda c: c.data is not None and c.data.startswith("my_sport_pick:"))
 async def my_sport_pick_callback(callback: CallbackQuery) -> None:
     await callback.answer()
+    await _cleanup_callback_message(callback)
     if callback.from_user is None:
         if callback.message is not None:
             await callback.message.answer("Ошибка: не удалось определить пользователя Telegram.")
@@ -806,6 +856,7 @@ async def my_sport_pick_callback(callback: CallbackQuery) -> None:
 @router.callback_query(lambda c: c.data is not None and c.data.startswith("my_sport_disable:"))
 async def my_sport_disable_callback(callback: CallbackQuery) -> None:
     await callback.answer()
+    await _cleanup_callback_message(callback)
     if callback.from_user is None:
         if callback.message is not None:
             await callback.message.answer("Ошибка: не удалось определить пользователя Telegram.")
@@ -830,6 +881,7 @@ async def my_sport_disable_callback(callback: CallbackQuery) -> None:
 @router.callback_query(lambda c: c.data is not None and c.data.startswith("my_sport_cancel_bookings:"))
 async def my_sport_cancel_bookings_callback(callback: CallbackQuery) -> None:
     await callback.answer()
+    await _cleanup_callback_message(callback)
     if callback.from_user is None:
         if callback.message is not None:
             await callback.message.answer("Ошибка: не удалось определить пользователя Telegram.")
@@ -865,6 +917,7 @@ async def my_sport_cancel_bookings_callback(callback: CallbackQuery) -> None:
 @router.callback_query(lambda c: c.data == "my_sport_cancel_all_no")
 async def my_sport_cancel_all_no_callback(callback: CallbackQuery) -> None:
     await callback.answer()
+    await _cleanup_callback_message(callback)
     if callback.from_user is not None:
         PENDING_CANCEL_ALL_RULE.pop(callback.from_user.id, None)
     if callback.message is not None:
@@ -874,6 +927,7 @@ async def my_sport_cancel_all_no_callback(callback: CallbackQuery) -> None:
 @router.callback_query(lambda c: c.data == "my_sport_cancel_all_yes")
 async def my_sport_cancel_all_yes_callback(callback: CallbackQuery) -> None:
     await callback.answer()
+    await _cleanup_callback_message(callback)
     if callback.from_user is None:
         if callback.message is not None:
             await callback.message.answer("Ошибка: не удалось определить пользователя Telegram.")
@@ -1033,6 +1087,7 @@ async def text_search_handler(message: Message) -> None:
 @router.callback_query(lambda c: c.data == "auth_login")
 async def auth_login_callback(callback: CallbackQuery) -> None:
     await callback.answer()
+    await _cleanup_callback_message(callback)
     if callback.from_user is not None:
         AUTH_WAITING_LOGIN.add(callback.from_user.id)
     if callback.message is not None:
@@ -1045,6 +1100,7 @@ async def auth_login_callback(callback: CallbackQuery) -> None:
 @router.callback_query(lambda c: c.data == "filters_open")
 async def filters_open_callback(callback: CallbackQuery) -> None:
     await callback.answer()
+    await _cleanup_callback_message(callback)
     if callback.message is not None:
         await callback.message.answer("Раздел фильтров скоро добавлю.")
 
@@ -1052,6 +1108,7 @@ async def filters_open_callback(callback: CallbackQuery) -> None:
 @router.callback_query(lambda c: c.data == "settings_open")
 async def settings_open_callback(callback: CallbackQuery) -> None:
     await callback.answer()
+    await _cleanup_callback_message(callback)
     if callback.message is not None:
         await callback.message.answer(
             "Настройки my.itmo:",
@@ -1062,6 +1119,7 @@ async def settings_open_callback(callback: CallbackQuery) -> None:
 @router.callback_query(lambda c: c.data == "settings_weekly_limit")
 async def settings_weekly_limit_callback(callback: CallbackQuery) -> None:
     await callback.answer()
+    await _cleanup_callback_message(callback)
     if callback.from_user is None:
         if callback.message is not None:
             await callback.message.answer("Ошибка: не удалось определить пользователя Telegram.")
@@ -1084,6 +1142,7 @@ async def settings_weekly_limit_callback(callback: CallbackQuery) -> None:
 @router.callback_query(lambda c: c.data is not None and c.data.startswith("settings_weekly_limit_set:"))
 async def settings_weekly_limit_set_callback(callback: CallbackQuery) -> None:
     await callback.answer()
+    await _cleanup_callback_message(callback)
     if callback.from_user is None:
         if callback.message is not None:
             await callback.message.answer("Ошибка: не удалось определить пользователя Telegram.")
@@ -1106,6 +1165,7 @@ async def settings_weekly_limit_set_callback(callback: CallbackQuery) -> None:
 @router.callback_query(lambda c: c.data == "settings_priorities")
 async def settings_priorities_callback(callback: CallbackQuery) -> None:
     await callback.answer()
+    await _cleanup_callback_message(callback)
     if callback.from_user is None:
         if callback.message is not None:
             await callback.message.answer("Ошибка: не удалось определить пользователя Telegram.")
@@ -1134,6 +1194,7 @@ async def settings_priorities_callback(callback: CallbackQuery) -> None:
 @router.callback_query(lambda c: c.data == "settings_relink_itmo")
 async def settings_relink_itmo_callback(callback: CallbackQuery) -> None:
     await callback.answer()
+    await _cleanup_callback_message(callback)
     if callback.from_user is not None:
         AUTH_WAITING_LOGIN.add(callback.from_user.id)
         AUTH_WAITING_PASSWORD.pop(callback.from_user.id, None)
@@ -1147,6 +1208,7 @@ async def settings_relink_itmo_callback(callback: CallbackQuery) -> None:
 @router.callback_query(lambda c: c.data == "settings_delete_itmo")
 async def settings_delete_itmo_callback(callback: CallbackQuery) -> None:
     await callback.answer()
+    await _cleanup_callback_message(callback)
     if callback.message is not None:
         await callback.message.answer(
             "Удалить логин и токены my.itmo из бота?",
@@ -1157,6 +1219,7 @@ async def settings_delete_itmo_callback(callback: CallbackQuery) -> None:
 @router.callback_query(lambda c: c.data == "settings_delete_itmo_no")
 async def settings_delete_itmo_no_callback(callback: CallbackQuery) -> None:
     await callback.answer()
+    await _cleanup_callback_message(callback)
     if callback.message is not None:
         await callback.message.answer("Ок, данные my.itmo оставил.")
 
@@ -1164,6 +1227,7 @@ async def settings_delete_itmo_no_callback(callback: CallbackQuery) -> None:
 @router.callback_query(lambda c: c.data == "settings_delete_itmo_yes")
 async def settings_delete_itmo_yes_callback(callback: CallbackQuery) -> None:
     await callback.answer()
+    await _cleanup_callback_message(callback)
     if callback.from_user is None:
         if callback.message is not None:
             await callback.message.answer("Ошибка: не удалось определить пользователя Telegram.")
@@ -1186,6 +1250,7 @@ async def settings_delete_itmo_yes_callback(callback: CallbackQuery) -> None:
 @router.callback_query(lambda c: c.data == "help_open")
 async def help_open_callback(callback: CallbackQuery) -> None:
     await callback.answer()
+    await _cleanup_callback_message(callback)
     if callback.message is not None:
         await callback.message.answer(
             "Если появились вопросы, то обратитесь по кнопке ниже:",
