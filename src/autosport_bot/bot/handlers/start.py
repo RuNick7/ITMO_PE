@@ -95,7 +95,8 @@ def _format_lesson_day_time(raw_date: str | None, raw_time: str | None) -> str:
     try:
         dt = datetime.fromisoformat(str(raw_date))
         day = day_names[dt.weekday()]
-        time_part = str(raw_time or dt.strftime("%H:%M"))
+        # Prefer real start from date because time_slot_start can be slot label.
+        time_part = dt.strftime("%H:%M")
         return f"{day} | {time_part}"
     except ValueError:
         return f"— | {raw_time or '--:--'}"

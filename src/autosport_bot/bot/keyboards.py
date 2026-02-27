@@ -1,6 +1,16 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 
+def _lesson_real_start_time(lesson: dict) -> str:
+    raw_date = lesson.get("date")
+    if isinstance(raw_date, str):
+        try:
+            return raw_date[11:16]
+        except Exception:
+            pass
+    return str(lesson.get("time_slot_start") or "--:--")
+
+
 def _lesson_type_emoji(lesson: dict) -> str:
     can_sign = lesson.get("can_sign_in") or {}
     reasons = can_sign.get("unavailable_reasons") if isinstance(can_sign, dict) else None
@@ -267,12 +277,12 @@ def weekly_limit_keyboard() -> InlineKeyboardMarkup:
 def sport_lessons_keyboard(lessons: list[dict], show_time: bool = False) -> InlineKeyboardMarkup:
     sorted_lessons = sorted(
         lessons,
-        key=lambda it: (str(it.get("time_slot_start") or "99:99"), str(it.get("section_name") or "")),
+        key=lambda it: (_lesson_real_start_time(it), str(it.get("section_name") or "")),
     )
     buttons: list[InlineKeyboardButton] = []
     for lesson in sorted_lessons[:20]:
         section = str(lesson.get("section_name") or "Без названия")
-        time_start = str(lesson.get("time_slot_start") or "--:--")
+        time_start = _lesson_real_start_time(lesson)
         lesson_id = lesson.get("id")
         if lesson_id is None:
             continue
