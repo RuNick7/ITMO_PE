@@ -4,6 +4,7 @@ import asyncio
 import logging
 from collections import defaultdict
 from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from aiogram import Bot
 import httpx
@@ -11,17 +12,26 @@ import httpx
 from autosport_bot.core.config import get_settings
 from autosport_bot.my_itmo.auth import ItmoAuthService
 from autosport_bot.my_itmo.client import MyItmoClient
+from autosport_bot.remnawave.client import RemnawaveClient
 from autosport_bot.storage.models import AutoEnrollRule
 from autosport_bot.storage.repository import SQLiteRepository
 
 logger = logging.getLogger(__name__)
+MSK = ZoneInfo("Europe/Moscow")
 
 
 class AutoEnrollWorker:
-    def __init__(self, repository: SQLiteRepository, poll_interval_seconds: int = 30):
+    def __init__(
+        self,
+        repository: SQLiteRepository,
+        poll_interval_seconds: int = 30,
+        remnawave_client: RemnawaveClient | None = None,
+    ):
         self._repo = repository
         self._poll_interval_seconds = poll_interval_seconds
+        self._remnawave = remnawave_client
         self._running = False
+        self._last_priority_refresh_date: str = ""
 
     @staticmethod
     def _lesson_matches_rule(lesson: dict, rule: AutoEnrollRule) -> bool:
@@ -53,6 +63,12 @@ class AutoEnrollWorker:
             await asyncio.sleep(self._poll_interval_seconds)
 
     async def _tick(self, bot: Bot) -> None:
+        now_msk = datetime.now(MSK)
+        if self._should_refresh_priority_flags(now_msk):
+            await self._refresh_priority_flags(now_msk)
+        if not self._is_enroll_window(now_msk):
+            return
+
         rules = self._repo.list_enabled_auto_enroll_rules()
         if not rules:
             return
@@ -61,7 +77,13 @@ class AutoEnrollWorker:
         for rule in rules:
             grouped[rule.chat_id].append(rule)
 
+        users_queue: list[tuple[int, list[AutoEnrollRule], bool]] = []
         for chat_id, user_rules in grouped.items():
+            users_queue.append((chat_id, user_rules, self._repo.get_priority_mode(chat_id)))
+        users_queue.sort(key=lambda entry: 0 if entry[2] else 1)
+
+        notified_non_priority_failure: set[int] = set()
+        for chat_id, user_rules, has_priority_access in users_queue:
             tokens = self._repo.get_tokens(chat_id)
             if tokens is None or not tokens.access_token:
                 continue
@@ -163,6 +185,23 @@ class AutoEnrollWorker:
                         lesson_id,
                         exc,
                     )
+                    if not has_priority_access and rule.chat_id not in notified_non_priority_failure:
+                        notified_non_priority_failure.add(rule.chat_id)
+                        try:
+                            await bot.send_message(
+                                chat_id=rule.chat_id,
+                                text=(
+                                    "⚠️ Не удалось выполнить запись прямо сейчас.\n"
+                                    "Если приобрести подписку от 89 рублей в @kairavpn_bot, "
+                                    "для тебя будет включён приоритетный режим записи."
+                                ),
+                            )
+                        except Exception as notify_exc:
+                            logger.warning(
+                                "Failed to send non-priority promo message chat_id=%s: %s",
+                                rule.chat_id,
+                                notify_exc,
+                            )
 
     @staticmethod
     def _week_key(lesson: dict) -> str | None:
@@ -202,3 +241,59 @@ class AutoEnrollWorker:
 
     def stop(self) -> None:
         self._running = False
+
+    @staticmethod
+    def _is_enroll_window(now_msk: datetime) -> bool:
+        minutes = now_msk.hour * 60 + now_msk.minute
+        window_start = 23 * 60 + 55
+        midnight_end = 10
+        return minutes >= window_start or minutes <= midnight_end
+
+    def _should_refresh_priority_flags(self, now_msk: datetime) -> bool:
+        if self._remnawave is None or not self._remnawave.is_configured:
+            return False
+        current_date = now_msk.date().isoformat()
+        if self._last_priority_refresh_date == current_date:
+            return False
+        # Run one sync request in the pre-window slot.
+        return now_msk.hour == 23 and now_msk.minute == 50
+
+    async def _refresh_priority_flags(self, now_msk: datetime) -> None:
+        if self._remnawave is None or not self._remnawave.is_configured:
+            return
+
+        target_user_ids = self._repo.list_enabled_auto_enroll_user_ids()
+        if not target_user_ids:
+            self._last_priority_refresh_date = now_msk.date().isoformat()
+            return
+
+        try:
+            remnawave_users = await self._remnawave.get_all_users()
+        except Exception as exc:
+            logger.warning("Failed to refresh priority flags from Remnawave: %s", exc)
+            return
+
+        active_ids: set[int] = set()
+        for user in remnawave_users:
+            if str(user.get("status") or "").upper() != "ACTIVE":
+                continue
+            raw_telegram_id = user.get("telegramId")
+            if raw_telegram_id is None:
+                continue
+            try:
+                active_ids.add(int(raw_telegram_id))
+            except (TypeError, ValueError):
+                continue
+
+        checked_at_iso = now_msk.isoformat()
+        updates = [
+            (telegram_id, telegram_id in active_ids, checked_at_iso)
+            for telegram_id in target_user_ids
+        ]
+        self._repo.set_priority_mode_bulk(updates)
+        self._last_priority_refresh_date = now_msk.date().isoformat()
+        logger.info(
+            "Priority flags refreshed: total=%s active_priority=%s",
+            len(target_user_ids),
+            sum(1 for _, has_priority, _ in updates if has_priority),
+        )

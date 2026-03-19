@@ -7,3 +7,6 @@ def test_settings_model_has_defaults() -> None:
     )
     assert settings.poll_interval_seconds == 10
     assert settings.itmo_client_id == "student-personal-cabinet"
+    assert settings.remnawave_base_url == ""
+    assert settings.remnawave_access_token == ""
+    assert settings.admin_telegram_ids == ""

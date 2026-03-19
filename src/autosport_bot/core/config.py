@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     itmo_redirect_uri: str = Field(default="https://my.itmo.ru/login/callback", alias="ITMO_REDIRECT_URI")
     itmo_realm: str = Field(default="itmo", alias="ITMO_REALM")
     poll_interval_seconds: int = Field(default=10, alias="POLL_INTERVAL_SECONDS")
+    remnawave_base_url: str = Field(default="", alias="REMNAWAVE_BASE_URL")
+    remnawave_access_token: str = Field(default="", alias="REMNAWAVE_ACCESS_TOKEN")
+    admin_telegram_ids: str = Field(default="", alias="ADMIN_TELEGRAM_IDS")
 
 
 @lru_cache

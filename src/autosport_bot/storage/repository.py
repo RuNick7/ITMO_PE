@@ -10,6 +10,7 @@ class InMemoryRepository:
     def __init__(self) -> None:
         self._preferences: dict[int, UserPreferences] = {}
         self._tokens: dict[int, UserTokens] = {}
+        self._priority_modes: dict[int, bool] = {}
 
     def get_preferences(self, chat_id: int) -> UserPreferences:
         if chat_id not in self._preferences:
@@ -21,6 +22,31 @@ class InMemoryRepository:
 
     def get_tokens(self, chat_id: int) -> UserTokens | None:
         return self._tokens.get(chat_id)
+
+    def list_all_user_ids(self) -> list[int]:
+        return sorted(self._preferences.keys())
+
+    def list_enabled_auto_enroll_user_ids(self) -> list[int]:
+        return sorted(self._preferences.keys())
+
+    def set_priority_mode(
+        self,
+        telegram_id: int,
+        has_priority_mode: bool,
+        checked_at_iso: str,
+    ) -> None:
+        _ = checked_at_iso
+        self._priority_modes[telegram_id] = has_priority_mode
+
+    def set_priority_mode_bulk(
+        self,
+        updates: list[tuple[int, bool, str]],
+    ) -> None:
+        for telegram_id, has_priority_mode, _ in updates:
+            self._priority_modes[telegram_id] = has_priority_mode
+
+    def get_priority_mode(self, telegram_id: int) -> bool:
+        return bool(self._priority_modes.get(telegram_id, False))
 
 
 class SQLiteRepository:
@@ -43,6 +69,8 @@ class SQLiteRepository:
                 refresh_expires_at INTEGER NOT NULL DEFAULT 0,
                 weekly_limit INTEGER NOT NULL DEFAULT 2,
                 weekly_limit_set INTEGER NOT NULL DEFAULT 0,
+                has_priority_mode INTEGER NOT NULL DEFAULT 0,
+                priority_checked_at TEXT NOT NULL DEFAULT '',
                 auto_sections TEXT NOT NULL DEFAULT '[]',
                 auto_days TEXT NOT NULL DEFAULT '[]',
                 auto_times TEXT NOT NULL DEFAULT '[]'
@@ -103,6 +131,10 @@ class SQLiteRepository:
             self._conn.execute("ALTER TABLE users ADD COLUMN weekly_limit INTEGER NOT NULL DEFAULT 2;")
         if not any(col["name"] == "weekly_limit_set" for col in user_cols):
             self._conn.execute("ALTER TABLE users ADD COLUMN weekly_limit_set INTEGER NOT NULL DEFAULT 0;")
+        if not any(col["name"] == "has_priority_mode" for col in user_cols):
+            self._conn.execute("ALTER TABLE users ADD COLUMN has_priority_mode INTEGER NOT NULL DEFAULT 0;")
+        if not any(col["name"] == "priority_checked_at" for col in user_cols):
+            self._conn.execute("ALTER TABLE users ADD COLUMN priority_checked_at TEXT NOT NULL DEFAULT '';")
         if not any(col["name"] == "priority" for col in cols):
             self._conn.execute("ALTER TABLE auto_enroll_rules ADD COLUMN priority INTEGER NOT NULL DEFAULT 0;")
         self._conn.execute(
@@ -188,6 +220,70 @@ class SQLiteRepository:
             access_expires_at=row["access_expires_at"],
             refresh_expires_at=row["refresh_expires_at"],
         )
+
+    def list_all_user_ids(self) -> list[int]:
+        rows = self._conn.execute(
+            """
+            SELECT telegram_id
+            FROM users
+            ORDER BY telegram_id ASC;
+            """
+        ).fetchall()
+        return [int(row["telegram_id"]) for row in rows]
+
+    def list_enabled_auto_enroll_user_ids(self) -> list[int]:
+        rows = self._conn.execute(
+            """
+            SELECT DISTINCT telegram_id
+            FROM auto_enroll_rules
+            WHERE enabled = 1
+            ORDER BY telegram_id ASC;
+            """
+        ).fetchall()
+        return [int(row["telegram_id"]) for row in rows]
+
+    def set_priority_mode(
+        self,
+        telegram_id: int,
+        has_priority_mode: bool,
+        checked_at_iso: str,
+    ) -> None:
+        self._conn.execute(
+            """
+            UPDATE users
+            SET has_priority_mode = ?, priority_checked_at = ?
+            WHERE telegram_id = ?;
+            """,
+            (1 if has_priority_mode else 0, checked_at_iso, telegram_id),
+        )
+        self._conn.commit()
+
+    def set_priority_mode_bulk(
+        self,
+        updates: list[tuple[int, bool, str]],
+    ) -> None:
+        self._conn.executemany(
+            """
+            UPDATE users
+            SET has_priority_mode = ?, priority_checked_at = ?
+            WHERE telegram_id = ?;
+            """,
+            [(1 if has_mode else 0, checked_at_iso, telegram_id) for telegram_id, has_mode, checked_at_iso in updates],
+        )
+        self._conn.commit()
+
+    def get_priority_mode(self, telegram_id: int) -> bool:
+        row = self._conn.execute(
+            """
+            SELECT has_priority_mode
+            FROM users
+            WHERE telegram_id = ?;
+            """,
+            (telegram_id,),
+        ).fetchone()
+        if row is None:
+            return False
+        return bool(row["has_priority_mode"])
 
     def clear_itmo_binding(self, telegram_id: int) -> None:
         self._conn.execute(

@@ -2,6 +2,7 @@ from aiogram import Router
 from aiogram.filters import Command
 from aiogram.filters import CommandStart
 from aiogram.types import CallbackQuery, Message
+import asyncio
 from datetime import date, datetime, timedelta
 import httpx
 
@@ -9,6 +10,8 @@ from autosport_bot.bot import context as bot_context
 from autosport_bot.bot.keyboards import (
     auto_bulk_offer_keyboard,
     auto_confirm_keyboard,
+    admin_broadcast_confirm_keyboard,
+    admin_panel_keyboard,
     back_to_choose_keyboard,
     choose_day_keyboard,
     choose_mode_keyboard,
@@ -45,6 +48,8 @@ PENDING_CANCEL_ALL_RULE: dict[int, int] = {}
 PRIORITY_EDIT_WAITING: dict[int, list[int]] = {}
 PENDING_SUBJECT_MATCHES: dict[int, list[str]] = {}
 PENDING_SUBJECT_AUTOREG: dict[int, str] = {}
+ADMIN_BROADCAST_WAITING: set[int] = set()
+ADMIN_BROADCAST_DRAFT: dict[int, dict[str, str]] = {}
 
 
 def _reset_user_interaction_state(user_id: int) -> None:
@@ -60,6 +65,8 @@ def _reset_user_interaction_state(user_id: int) -> None:
     PRIORITY_EDIT_WAITING.pop(user_id, None)
     PENDING_SUBJECT_MATCHES.pop(user_id, None)
     PENDING_SUBJECT_AUTOREG.pop(user_id, None)
+    ADMIN_BROADCAST_WAITING.discard(user_id)
+    ADMIN_BROADCAST_DRAFT.pop(user_id, None)
 
 
 def _legend_text() -> str:
@@ -188,6 +195,98 @@ def _friendly_schedule_error(exc: Exception) -> str:
         if status_code == 401:
             return "Сессия истекла. Повтори вход: /login <itmo_login> <itmo_password>"
     return f"Ошибка при получении расписания: {exc}"
+
+
+def _admin_ids() -> set[int]:
+    raw = get_settings().admin_telegram_ids
+    if not raw:
+        return set()
+    ids: set[int] = set()
+    for part in raw.split(","):
+        value = part.strip()
+        if not value:
+            continue
+        try:
+            ids.add(int(value))
+        except ValueError:
+            continue
+    return ids
+
+
+def _is_admin(telegram_id: int) -> bool:
+    return telegram_id in _admin_ids()
+
+
+def _extract_broadcast_payload(message: Message) -> dict[str, str] | None:
+    text_payload = (message.text or "").strip()
+    if text_payload:
+        return {"kind": "text", "text": text_payload}
+    if message.photo:
+        photo = message.photo[-1]
+        caption = (message.caption or "").strip()
+        return {"kind": "photo", "file_id": photo.file_id, "caption": caption}
+    if message.video:
+        caption = (message.caption or "").strip()
+        return {"kind": "video", "file_id": message.video.file_id, "caption": caption}
+    return None
+
+
+def _broadcast_preview(payload: dict[str, str]) -> str:
+    kind = payload.get("kind", "")
+    if kind == "text":
+        text = payload.get("text", "")
+        return f"Предпросмотр рассылки (текст):\n\n{text}"
+    if kind == "photo":
+        caption = payload.get("caption", "")
+        suffix = f"\n\nПодпись:\n{caption}" if caption else ""
+        return f"Предпросмотр рассылки (фото).{suffix}"
+    if kind == "video":
+        caption = payload.get("caption", "")
+        suffix = f"\n\nПодпись:\n{caption}" if caption else ""
+        return f"Предпросмотр рассылки (видео).{suffix}"
+    return "Не удалось подготовить предпросмотр."
+
+
+async def _run_broadcast(bot, sender_id: int, payload: dict[str, str]) -> tuple[int, int]:
+    if bot_context.repository is None:
+        return 0, 0
+    recipients = [uid for uid in bot_context.repository.list_all_user_ids() if uid != sender_id]
+    if not recipients:
+        return 0, 0
+
+    success = 0
+    failed = 0
+    batch_size = 20
+
+    for offset in range(0, len(recipients), batch_size):
+        batch = recipients[offset : offset + batch_size]
+        for chat_id in batch:
+            try:
+                kind = payload.get("kind", "")
+                if kind == "text":
+                    await bot.send_message(chat_id=chat_id, text=payload.get("text", ""))
+                elif kind == "photo":
+                    await bot.send_photo(
+                        chat_id=chat_id,
+                        photo=payload.get("file_id", ""),
+                        caption=payload.get("caption", "") or None,
+                    )
+                elif kind == "video":
+                    await bot.send_video(
+                        chat_id=chat_id,
+                        video=payload.get("file_id", ""),
+                        caption=payload.get("caption", "") or None,
+                    )
+                else:
+                    failed += 1
+                    continue
+                success += 1
+            except Exception:
+                failed += 1
+            await asyncio.sleep(0.06)
+        if offset + batch_size < len(recipients):
+            await asyncio.sleep(1.0)
+    return success, failed
 
 
 async def _fetch_lessons_for_user(telegram_id: int) -> tuple[list[dict], str | None]:
@@ -571,6 +670,83 @@ async def choose_command(message: Message) -> None:
         "Как хочешь выбрать занятие?",
         reply_markup=choose_mode_keyboard(),
     )
+
+
+@router.message(Command("admin"))
+async def admin_command(message: Message) -> None:
+    if message.from_user is None:
+        await message.answer("Ошибка: не удалось определить пользователя Telegram.")
+        return
+    if not _is_admin(message.from_user.id):
+        await message.answer("Команда доступна только администраторам.")
+        return
+    _reset_user_interaction_state(message.from_user.id)
+    await message.answer(
+        "Админ-панель:",
+        reply_markup=admin_panel_keyboard(),
+    )
+
+
+@router.callback_query(lambda c: c.data == "admin_broadcast_open")
+async def admin_broadcast_open_callback(callback: CallbackQuery) -> None:
+    await callback.answer()
+    await _cleanup_callback_message(callback)
+    if callback.from_user is None:
+        if callback.message is not None:
+            await callback.message.answer("Ошибка: не удалось определить пользователя Telegram.")
+        return
+    if not _is_admin(callback.from_user.id):
+        if callback.message is not None:
+            await callback.message.answer("Недостаточно прав.")
+        return
+    ADMIN_BROADCAST_WAITING.add(callback.from_user.id)
+    ADMIN_BROADCAST_DRAFT.pop(callback.from_user.id, None)
+    if callback.message is not None:
+        await callback.message.answer(
+            "Отправь контент для рассылки:\n"
+            "- текст\n"
+            "- фото с подписью (или без)\n"
+            "- видео с подписью (или без)"
+        )
+
+
+@router.callback_query(lambda c: c.data == "admin_broadcast_cancel")
+async def admin_broadcast_cancel_callback(callback: CallbackQuery) -> None:
+    await callback.answer()
+    await _cleanup_callback_message(callback)
+    if callback.from_user is not None:
+        ADMIN_BROADCAST_WAITING.discard(callback.from_user.id)
+        ADMIN_BROADCAST_DRAFT.pop(callback.from_user.id, None)
+    if callback.message is not None:
+        await callback.message.answer("Рассылка отменена.", reply_markup=admin_panel_keyboard())
+
+
+@router.callback_query(lambda c: c.data == "admin_broadcast_confirm")
+async def admin_broadcast_confirm_callback(callback: CallbackQuery) -> None:
+    await callback.answer()
+    await _cleanup_callback_message(callback)
+    if callback.from_user is None:
+        if callback.message is not None:
+            await callback.message.answer("Ошибка: не удалось определить пользователя Telegram.")
+        return
+    if not _is_admin(callback.from_user.id):
+        if callback.message is not None:
+            await callback.message.answer("Недостаточно прав.")
+        return
+    payload = ADMIN_BROADCAST_DRAFT.pop(callback.from_user.id, None)
+    ADMIN_BROADCAST_WAITING.discard(callback.from_user.id)
+    if payload is None:
+        if callback.message is not None:
+            await callback.message.answer("Черновик рассылки не найден. Создай его заново.")
+        return
+    if callback.message is not None:
+        await callback.message.answer("Запускаю рассылку, это может занять некоторое время...")
+    success, failed = await _run_broadcast(callback.bot, callback.from_user.id, payload)
+    if callback.message is not None:
+        await callback.message.answer(
+            f"Рассылка завершена.\nУспешно: {success}\nОшибок: {failed}",
+            reply_markup=admin_panel_keyboard(),
+        )
 
 
 @router.callback_query(lambda c: c.data == "choose_sport")
@@ -1377,6 +1553,27 @@ async def text_search_handler(message: Message) -> None:
             itmo_password=itmo_password,
         )
         await message.answer(text, reply_markup=main_menu_keyboard() if ok else None)
+        return
+
+    if user_id in ADMIN_BROADCAST_WAITING:
+        if not _is_admin(user_id):
+            ADMIN_BROADCAST_WAITING.discard(user_id)
+            ADMIN_BROADCAST_DRAFT.pop(user_id, None)
+            await message.answer("Недостаточно прав.")
+            return
+        payload = _extract_broadcast_payload(message)
+        if payload is None:
+            await message.answer(
+                "Поддерживаются только текст, фото или видео.\n"
+                "Попробуй отправить контент ещё раз."
+            )
+            return
+        ADMIN_BROADCAST_DRAFT[user_id] = payload
+        ADMIN_BROADCAST_WAITING.discard(user_id)
+        await message.answer(
+            _broadcast_preview(payload),
+            reply_markup=admin_broadcast_confirm_keyboard(),
+        )
         return
 
     if user_id in PRIORITY_EDIT_WAITING:

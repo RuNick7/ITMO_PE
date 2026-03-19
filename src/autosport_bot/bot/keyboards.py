@@ -307,3 +307,21 @@ def sport_lessons_keyboard(lessons: list[dict], show_time: bool = False) -> Inli
     return InlineKeyboardMarkup(
         inline_keyboard=rows or [[InlineKeyboardButton(text="Нет данных", callback_data="noop")]]
     )
+
+
+def admin_panel_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📣 Рассылка", callback_data="admin_broadcast_open")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_main")],
+        ]
+    )
+
+
+def admin_broadcast_confirm_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Запустить рассылку", callback_data="admin_broadcast_confirm")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_broadcast_cancel")],
+        ]
+    )
